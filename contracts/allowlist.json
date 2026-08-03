@@ -1,0 +1,11 @@
+{
+  "_comment": "Resolved commit SHAs of def-academy/validators that the platform will accept in referenced_workflows[]. Refs are mutable; these are not.",
+  "cti": {
+    "1.0.0": {
+      "tag": "v1.0.0",
+      "sha": "REPLACE_WITH_COMMIT_SHA_AFTER_TAGGING",
+      "workflows": [".github/workflows/cti-m01.yml", ".github/workflows/_integrity.yml"]
+    }
+  },
+  "dfir": {}
+}

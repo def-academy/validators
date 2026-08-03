@@ -1,0 +1,139 @@
+name: cti-m01 validator
+
+# Org-owned. Students call this via `uses:` and cannot modify it.
+# Tag refs are readable but mutable, so the platform independently resolves
+# referenced_workflows[].sha from the workflow_run API and asserts it is on
+# the allowlist. See platform/verify_workflow_run.py.
+
+on:
+  workflow_call:
+    inputs:
+      milestone_id:
+        required: true
+        type: string
+      contract_path:
+        required: true
+        type: string
+      python_version:
+        required: false
+        type: string
+        default: "3.12"
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      score: ${{ steps.contract.outputs.score }}
+      verdict: ${{ steps.contract.outputs.verdict }}
+
+    steps:
+      # Full history: commit cadence, signature, and diff-entropy signals
+      # all need more than a shallow clone.
+      - name: Checkout student repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: student
+
+      # job_workflow_sha is the resolved commit of THIS reusable workflow, so
+      # the toolchain is always the exact code the caller pinned — a version
+      # bump needs no edit here, and tag repointing cannot desync the two.
+      - name: Checkout validator toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: def-academy/validators
+          ref: ${{ github.job_workflow_sha }}
+          path: validators
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install validator
+        working-directory: validators
+        run: pip install --no-cache-dir -e .
+
+      # ---- required_checks: run the student's own toolchain ----
+      # Non-blocking here. The contract runner reads these results and applies
+      # the blocking policy from milestone.yaml, so policy lives in one place.
+
+      - name: lint
+        id: lint
+        continue-on-error: true
+        working-directory: student
+        run: pipx run ruff check .
+
+      - name: typecheck
+        id: typecheck
+        continue-on-error: true
+        working-directory: student
+        run: |
+          pip install mypy
+          mypy --strict src/ || mypy --strict . 
+
+      - name: secret_scan
+        id: secret_scan
+        continue-on-error: true
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: signed_commits
+        id: signed_commits
+        continue-on-error: true
+        working-directory: student
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          unsigned=$(git log --format='%H %G?' "${base}..${head}" | grep -vE ' (G|U)$' || true)
+          if [ -n "$unsigned" ]; then
+            echo "Unsigned commits on branch:"; echo "$unsigned"; exit 1
+          fi
+
+      # ---- contract evaluation ----
+      - name: Evaluate milestone contract
+        id: contract
+        working-directory: student
+        env:
+          CHECK_LINT:          ${{ steps.lint.outcome }}
+          CHECK_TYPECHECK:     ${{ steps.typecheck.outcome }}
+          CHECK_SECRET_SCAN:   ${{ steps.secret_scan.outcome }}
+          CHECK_SIGNED_COMMITS: ${{ steps.signed_commits.outcome }}
+          PR_BASE_SHA:         ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA:         ${{ github.event.pull_request.head.sha }}
+        run: |
+          academy-validate \
+            --contract "${{ inputs.contract_path }}" \
+            --schema schemas/milestone.schema.json \
+            --repo-root . \
+            --attestation "$RUNNER_TEMP/attestation.json" \
+            --github-summary "$GITHUB_STEP_SUMMARY"
+
+      # Signed by the org App downstream. The platform treats this as a claim
+      # to be verified, never as a grade.
+      - name: Upload attestation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestation-${{ inputs.milestone_id }}
+          path: ${{ runner.temp }}/attestation.json
+          retention-days: 90
+
+      - name: Publish check run
+        if: always()
+        working-directory: validators
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          academy-publish-check \
+            --attestation "$RUNNER_TEMP/attestation.json" \
+            --repo "${{ github.repository }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --name "milestone/${{ inputs.milestone_id }}"

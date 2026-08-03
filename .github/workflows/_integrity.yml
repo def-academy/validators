@@ -1,0 +1,53 @@
+name: integrity (advisory)
+
+# Fast student-facing feedback. NOT authoritative.
+# A student who edits a locked file can also edit .academy/lockfile.json, which
+# is exactly why the real decision is made platform-side from the workflow_run
+# webhook using template blob SHAs the student never controls.
+
+on:
+  workflow_call:
+    inputs:
+      course:         { required: true,  type: string }
+      course_version: { required: true,  type: string }
+
+permissions:
+  contents: read
+
+jobs:
+  locked-files:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Compare locked paths against lockfile
+        run: |
+          python - <<'PY'
+          import hashlib, json, pathlib, sys
+          lock = json.loads(pathlib.Path(".academy/lockfile.json").read_text())
+          bad = []
+          for path, expected in lock["locked_paths"].items():
+              p = pathlib.Path(path)
+              if not p.is_file():
+                  bad.append(f"{path}: DELETED"); continue
+              if expected == "PLACEHOLDER_SHA256":
+                  continue
+              actual = hashlib.sha256(p.read_bytes()).hexdigest()
+              if actual != expected:
+                  bad.append(f"{path}: MODIFIED")
+          if bad:
+              print("::error::Locked files changed. This will fail platform-side verification.")
+              for b in bad: print(f"::error::{b}")
+              sys.exit(1)
+          print("Locked files intact.")
+          PY
+
+      - name: Require signed commits
+        run: |
+          unsigned=$(git log --format='%H %G?' -n 50 | grep -vE ' (G|U)$' || true)
+          if [ -n "$unsigned" ]; then
+            echo "::warning::Unsigned commits present. Enable commit signing before submitting."
+            echo "$unsigned"
+          fi

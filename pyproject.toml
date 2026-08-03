@@ -1,0 +1,16 @@
+[project]
+name = "academy-validate"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = ["PyYAML>=6.0", "jsonschema>=4.22", "requests>=2.32"]
+
+[project.scripts]
+academy-validate = "academy_validate.cli:main"
+academy-publish-check = "academy_validate.publish:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["academy_validate", "platform_verify"]
