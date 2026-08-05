@@ -76,14 +76,25 @@ jobs:
         working-directory: student
         run: |
           pip install mypy
-          mypy --strict src/ || mypy --strict . 
+          files=$(git ls-files '*.py')
+          if [ -z "$files" ]; then
+            echo "no Python sources yet; nothing to typecheck"
+          else
+            mypy --strict $files
+          fi
 
+      # Pinned binary, not gitleaks/gitleaks-action@v2 — the action requires a
+      # paid GITLEAKS_LICENSE when the repo is org-owned, so it can never pass
+      # in student repos. detect scans git history, not just the worktree.
       - name: secret_scan
         id: secret_scan
         continue-on-error: true
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        working-directory: student
+        run: |
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --no-banner
 
       - name: signed_commits
         id: signed_commits
