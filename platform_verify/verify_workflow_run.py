@@ -75,6 +75,12 @@ def verify_signature(secret: bytes, body: bytes, header: str | None) -> bool:
     return hmac.compare_digest(expected, header)
 
 
+def _is_grading_workflow(path: str) -> bool:
+    """Advisory helpers are "_"-prefixed by convention and never produce grades."""
+    name = path.split("@", 1)[0].rsplit("/", 1)[-1]
+    return not name.startswith("_")
+
+
 # ---------------------------------------------------------------------------
 # The four assertions
 # ---------------------------------------------------------------------------
@@ -117,6 +123,15 @@ def verify(
     org_refs = [w for w in referenced if str(w.get("path", "")).startswith(f"{VALIDATOR_REPO}/")]
     if not org_refs:
         reasons.append("no org-owned validator referenced: student ran their own grader")
+
+    # Advisory runs never grade. "_"-prefixed workflows (_integrity.yml) exist
+    # for fast in-repo feedback and upload no attestation; demanding one here
+    # turned every advisory completion into a false INTEGRITY_HOLD that raced
+    # the real validator run.
+    if org_refs and not any(_is_grading_workflow(str(w.get("path", ""))) for w in org_refs):
+        return VerificationResult(
+            Verdict.IGNORED, None, ["advisory run: no grading workflow referenced"]
+        )
     for w in org_refs:
         if w.get("sha") not in allowlisted_validator_shas:
             reasons.append(

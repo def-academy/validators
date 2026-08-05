@@ -78,6 +78,40 @@ def test_fork_origin_rejected():
     assert any("fork" in x for x in r.reasons)
 
 
+def test_advisory_integrity_run_is_ignored_not_held():
+    """_integrity.yml uploads no attestation by design. Its completion races
+    the real validator run on every PR push; if it were held, a student in
+    VALIDATING would get a false INTEGRITY_HOLD needing human release."""
+    gh = FakeGH([{"path": "def-academy/validators/.github/workflows/_integrity.yml",
+                  "sha": GOOD_SHA, "ref": "refs/tags/v1.0.0"}],
+                {".github/workflows/m01-validate.yml": "blobA"}, None)
+    r = verify(payload(), ENR, gh, {GOOD_SHA})
+    assert r.verdict is Verdict.IGNORED
+    assert next_state(r, "") == "NO_CHANGE"
+
+
+def test_advisory_verdict_ignores_even_unallowlisted_sha():
+    """An advisory run can't grade, so it can't hold either — tampering with
+    _integrity.yml only breaks the student's own feedback loop. The blob-level
+    check on the caller stub still catches edits to locked files."""
+    gh = FakeGH([{"path": "def-academy/validators/.github/workflows/_integrity.yml",
+                  "sha": "b" * 40}],
+                {".github/workflows/m01-validate.yml": "blobA"}, None)
+    assert verify(payload(), ENR, gh, {GOOD_SHA}).verdict is Verdict.IGNORED
+
+
+def test_grading_run_with_advisory_sibling_still_fully_verified():
+    """A run referencing BOTH workflows is a grading run: every assertion
+    applies, including the SHA allowlist on the advisory sibling."""
+    gh = FakeGH([{"path": "def-academy/validators/.github/workflows/cti-m01.yml",
+                  "sha": GOOD_SHA},
+                 {"path": "def-academy/validators/.github/workflows/_integrity.yml",
+                  "sha": "b" * 40}],
+                {".github/workflows/m01-validate.yml": "blobA"}, good_att())
+    r = verify(payload(), ENR, gh, {GOOD_SHA})
+    assert r.verdict is Verdict.INTEGRITY_HOLD
+
+
 def test_signature_verification():
     secret, body = b"s3cret", b'{"a":1}'
     import hmac, hashlib

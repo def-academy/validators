@@ -96,16 +96,27 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks detect --source . --redact --no-banner
 
+      # Verified via the API, not `git log %G?`: bare git cannot verify SSH
+      # signatures without an allowedSignersFile, so it reports every
+      # SSH-signed commit as unsigned. GitHub's verification is authoritative
+      # for keys registered on the author's account.
       - name: signed_commits
         id: signed_commits
         continue-on-error: true
         working-directory: student
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
-          unsigned=$(git log --format='%H %G?' "${base}..${head}" | grep -vE ' (G|U)$' || true)
+          unsigned=""
+          for sha in $(git rev-list "${base}..${head}"); do
+            v=$(gh api "repos/${{ github.repository }}/commits/${sha}" \
+                  --jq '.commit.verification.verified')
+            [ "$v" = "true" ] || unsigned="$unsigned $sha"
+          done
           if [ -n "$unsigned" ]; then
-            echo "Unsigned commits on branch:"; echo "$unsigned"; exit 1
+            echo "Commits without a verified signature:$unsigned"; exit 1
           fi
 
       # ---- contract evaluation ----
