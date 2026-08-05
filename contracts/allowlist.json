@@ -3,8 +3,11 @@
   "cti": {
     "1.0.0": {
       "tag": "v1.0.0",
-      "sha": "357fa4731979a580f6d50d9bcc279c8dd5bfe689",
-      "workflows": [".github/workflows/cti-m01.yml", ".github/workflows/_integrity.yml"]
+      "sha": "f57547eac1d01e3a8142dc9115e6f78049a69106",
+      "workflows": [
+        ".github/workflows/cti-m01.yml",
+        ".github/workflows/_integrity.yml"
+      ]
     }
   },
   "dfir": {}
