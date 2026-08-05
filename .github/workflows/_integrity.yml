@@ -4,6 +4,10 @@ name: integrity (advisory)
 # A student who edits a locked file can also edit .academy/lockfile.json, which
 # is exactly why the real decision is made platform-side from the workflow_run
 # webhook using template blob SHAs the student never controls.
+#
+# The comparison logic lives in academy_validate/lockcheck.py rather than inline
+# here, because inline workflow scripts are the one place in this repo pytest
+# cannot reach — and that is precisely where the sha256-vs-blob-SHA bug shipped.
 
 on:
   workflow_call:
@@ -19,32 +23,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout student repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: student
+
+      # job_workflow_sha is the resolved commit of THIS reusable workflow, so the
+      # checker is always the exact code the caller pinned. No pip install: the
+      # module is stdlib-only, which keeps the advisory tier fast.
+      - name: Checkout validator toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: def-academy/validators
+          ref: ${{ github.job_workflow_sha }}
+          path: validators
 
       - name: Compare locked paths against lockfile
-        run: |
-          python - <<'PY'
-          import hashlib, json, pathlib, sys
-          lock = json.loads(pathlib.Path(".academy/lockfile.json").read_text())
-          bad = []
-          for path, expected in lock["locked_paths"].items():
-              p = pathlib.Path(path)
-              if not p.is_file():
-                  bad.append(f"{path}: DELETED"); continue
-              if expected == "PLACEHOLDER_SHA256":
-                  continue
-              actual = hashlib.sha256(p.read_bytes()).hexdigest()
-              if actual != expected:
-                  bad.append(f"{path}: MODIFIED")
-          if bad:
-              print("::error::Locked files changed. This will fail platform-side verification.")
-              for b in bad: print(f"::error::{b}")
-              sys.exit(1)
-          print("Locked files intact.")
-          PY
+        env:
+          PYTHONPATH: ${{ github.workspace }}/validators
+        run: python3 -m academy_validate.lockcheck "${{ github.workspace }}/student"
 
+      # Advisory on purpose. The blocking decision for signed_commits belongs to
+      # the contract (required_checks, weight 5), evaluated by contract.py from
+      # the CHECK_SIGNED_COMMITS outcome that cti-m01.yml exports. Failing here
+      # too would put the same policy in two places.
       - name: Require signed commits
+        working-directory: student
         run: |
           unsigned=$(git log --format='%H %G?' -n 50 | grep -vE ' (G|U)$' || true)
           if [ -n "$unsigned" ]; then
